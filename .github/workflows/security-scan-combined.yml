@@ -394,7 +394,7 @@ jobs:
 
       # Save reports as artifacts
       - name: Upload Reports as Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: security-scan-reports
           path: |
