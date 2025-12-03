@@ -37,7 +37,7 @@ jobs:
 
       # ZAP quick scan (reduced scope)
       - name: ZAP Quick Scan
-        uses: zaproxy/action-baseline@v0.14.0
+        uses: zaproxy/action-baseline@v0.15.0
         with:
           target: 'http://localhost:3000'
           cmd_options: '-a -j -l INFO'  # Faster scan options
