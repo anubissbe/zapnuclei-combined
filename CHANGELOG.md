@@ -7,11 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Community standard files (LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY)
-- Comprehensive changelog documentation
-
-## [1.0.0] - 2025-12-03
+## [0.1.0] - 2025-12-03
 
 ### Added
 - Complete security scanning workflow with OWASP ZAP and Nuclei
