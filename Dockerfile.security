@@ -1,0 +1,44 @@
+# Multi-stage build for security scanning
+FROM node:20-alpine AS app-build
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+
+# Use ZAP stable image as base (has ZAP pre-installed)
+FROM ghcr.io/zaproxy/zaproxy:stable
+
+# Switch to root to install additional tools
+USER root
+
+# Install Node.js and basic tools
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    nodejs \
+    npm \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Nuclei
+RUN wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.5.1/nuclei_3.5.1_linux_amd64.zip \
+    && unzip nuclei_3.5.1_linux_amd64.zip \
+    && mv nuclei /usr/local/bin/nuclei \
+    && chmod +x /usr/local/bin/nuclei \
+    && rm nuclei_3.5.1_linux_amd64.zip \
+    && nuclei -update-templates -silent
+
+# Copy application
+WORKDIR /app
+COPY --from=app-build /app ./
+
+# Install additional Python packages for SARIF conversion
+RUN pip3 install --break-system-packages requests
+
+# Create ZAP working directory
+RUN mkdir -p /zap/wrk && chmod 777 /zap/wrk
+
+EXPOSE 3000
+CMD ["node", "server.js"]

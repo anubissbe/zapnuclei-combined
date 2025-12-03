@@ -1,0 +1,259 @@
+name: Security Scan (Inline Build)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * 1' # Weekly on Monday at 2 AM
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: anubissbe/zapnuclei-combined/security-scanner
+
+jobs:
+  security-scan:
+    name: Security Scan (Inline)
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Build and Start Security Scanner Container (Inline)
+      run: |
+        echo "Building security scanner container inline..."
+        
+        # Create minimal Dockerfile inline
+        cat << 'DOCKER_EOF' > Dockerfile.inline
+        FROM node:20-slim
+        
+        # Install ZAP, Nuclei, and security tools
+        RUN apt-get update && apt-get install -y \
+            wget \
+            curl \
+            python3 \
+            python3-pip \
+            default-jre-headless \
+            unzip \
+            && rm -rf /var/lib/apt/lists/*
+        
+        # Install ZAP
+        RUN wget -q https://github.com/zaproxy/zaproxy/releases/download/v2.15.0/ZAP_2_15_0_unix.sh -O /tmp/ZAP_installer.sh \
+            && chmod +x /tmp/ZAP_installer.sh \
+            && /tmp/ZAP_installer.sh -q \
+            && rm /tmp/ZAP_installer.sh
+        
+        # Install Nuclei
+        RUN wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.5.1/nuclei_3.5.1_linux_amd64.zip -O /tmp/nuclei.zip \
+            && unzip -q /tmp/nuclei.zip -d /tmp \
+            && mv /tmp/nuclei /usr/local/bin/ \
+            && chmod +x /usr/local/bin/nuclei \
+            && rm /tmp/nuclei.zip
+        
+        # Set up the vulnerable app
+        WORKDIR /app
+        COPY package*.json ./
+        RUN npm ci --only=production
+        COPY . .
+        
+        EXPOSE 3000
+        CMD ["npm", "start"]
+        DOCKER_EOF
+        
+        # Build container
+        docker build -f Dockerfile.inline -t security-scanner:latest .
+        
+        # Start container
+        docker run -d --name security-app -p 3000:3000 security-scanner:latest
+        
+        # Wait for app to be ready
+        timeout 60 bash -c 'until curl -sf http://localhost:3000/health > /dev/null 2>&1; do sleep 2; done'
+        echo "✅ App started successfully at $(date)"
+    
+    - name: Run ZAP Security Scan
+      run: |
+        echo "🔍 Running ZAP baseline scan..."
+        docker exec security-app /opt/zaproxy/zap.sh \
+          -cmd \
+          -port 8080 \
+          -quickurl http://localhost:3000 \
+          -quickout /app/zap-report.json \
+          -quickprogress || true
+        
+        # Copy report from container
+        docker cp security-app:/app/zap-report.json ./zap-report.json || echo "No ZAP report generated"
+    
+    - name: Run Nuclei Security Scan
+      run: |
+        echo "🔍 Running Nuclei template scan..."
+        docker exec security-app nuclei \
+          -target http://localhost:3000 \
+          -o /app/nuclei-report.jsonl \
+          -jsonl \
+          -silent || true
+        
+        # Copy report from container  
+        docker cp security-app:/app/nuclei-report.jsonl ./nuclei-report.jsonl || echo "No Nuclei report generated"
+    
+    - name: Convert to SARIF and Upload
+      run: |
+        echo "📊 Converting security reports to SARIF format..."
+        
+        # Create SARIF conversion script inline
+        cat << 'PYTHON_EOF' > convert_to_sarif.py
+        #!/usr/bin/env python3
+        import json
+        import os
+        from datetime import datetime
+        
+        def create_sarif_template():
+            return {
+                "version": "2.1.0",
+                "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+                "runs": [{
+                    "tool": {
+                        "driver": {
+                            "name": "ZAP+Nuclei Security Scanner",
+                            "version": "1.0.0",
+                            "informationUri": "https://github.com/anubissbe/zapnuclei-combined",
+                            "rules": []
+                        }
+                    },
+                    "results": [],
+                    "columnKind": "utf16CodeUnits"
+                }]
+            }
+        
+        def process_zap_report():
+            results = []
+            rules = []
+            
+            if not os.path.exists('zap-report.json'):
+                return results, rules
+            
+            try:
+                with open('zap-report.json', 'r') as f:
+                    zap_data = json.load(f)
+                
+                for site in zap_data.get('site', []):
+                    for alert in site.get('alerts', []):
+                        rule_id = f"zap-{alert.get('pluginid', 'unknown')}"
+                        
+                        # Add rule if not exists
+                        if not any(rule['id'] == rule_id for rule in rules):
+                            rules.append({
+                                "id": rule_id,
+                                "name": alert.get('name', 'ZAP Alert'),
+                                "shortDescription": {"text": alert.get('name', 'ZAP Security Alert')},
+                                "fullDescription": {"text": alert.get('desc', 'Security vulnerability detected by ZAP')},
+                                "defaultConfiguration": {"level": "warning"},
+                                "helpUri": f"https://www.zaproxy.org/docs/alerts/{alert.get('pluginid', '')}/"
+                            })
+                        
+                        # Process instances
+                        for instance in alert.get('instances', []):
+                            results.append({
+                                "ruleId": rule_id,
+                                "message": {"text": f"{alert.get('name', 'Security Issue')}: {alert.get('desc', '')}"},
+                                "level": "warning",
+                                "locations": [{
+                                    "physicalLocation": {
+                                        "artifactLocation": {"uri": "app.js"},
+                                        "region": {"startLine": 1, "startColumn": 1}
+                                    }
+                                }]
+                            })
+            except Exception as e:
+                print(f"Error processing ZAP report: {e}")
+            
+            return results, rules
+        
+        def process_nuclei_report():
+            results = []
+            rules = []
+            
+            if not os.path.exists('nuclei-report.jsonl'):
+                return results, rules
+            
+            try:
+                with open('nuclei-report.jsonl', 'r') as f:
+                    for line in f:
+                        if line.strip():
+                            nuclei_result = json.loads(line)
+                            
+                            rule_id = f"nuclei-{nuclei_result.get('template-id', 'unknown')}"
+                            
+                            # Add rule if not exists
+                            if not any(rule['id'] == rule_id for rule in rules):
+                                rules.append({
+                                    "id": rule_id,
+                                    "name": nuclei_result.get('info', {}).get('name', 'Nuclei Detection'),
+                                    "shortDescription": {"text": nuclei_result.get('info', {}).get('name', 'Nuclei Security Detection')},
+                                    "fullDescription": {"text": nuclei_result.get('info', {}).get('description', 'Security issue detected by Nuclei')},
+                                    "defaultConfiguration": {"level": "note"},
+                                    "helpUri": f"https://github.com/projectdiscovery/nuclei-templates/tree/main/{nuclei_result.get('template-id', '')}"
+                                })
+                            
+                            results.append({
+                                "ruleId": rule_id,
+                                "message": {"text": f"{nuclei_result.get('info', {}).get('name', 'Security Detection')}: {nuclei_result.get('info', {}).get('description', '')}"},
+                                "level": "note",
+                                "locations": [{
+                                    "physicalLocation": {
+                                        "artifactLocation": {"uri": "app.js"},
+                                        "region": {"startLine": 1, "startColumn": 1}
+                                    }
+                                }]
+                            })
+            except Exception as e:
+                print(f"Error processing Nuclei report: {e}")
+            
+            return results, rules
+        
+        # Main conversion
+        sarif = create_sarif_template()
+        
+        zap_results, zap_rules = process_zap_report()
+        nuclei_results, nuclei_rules = process_nuclei_report()
+        
+        sarif['runs'][0]['tool']['driver']['rules'] = zap_rules + nuclei_rules
+        sarif['runs'][0]['results'] = zap_results + nuclei_results
+        
+        # Write SARIF output
+        with open('security-scan.sarif', 'w') as f:
+            json.dump(sarif, f, indent=2)
+        
+        print(f"✅ Generated SARIF with {len(sarif['runs'][0]['results'])} findings")
+        PYTHON_EOF
+        
+        python3 convert_to_sarif.py
+    
+    - name: Upload SARIF results
+      uses: github/codeql-action/upload-sarif@v4
+      if: always()
+      with:
+        sarif_file: security-scan.sarif
+        category: security-scan-inline
+    
+    - name: Upload Security Reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-reports-inline
+        path: |
+          zap-report.json
+          nuclei-report.jsonl
+          security-scan.sarif
+    
+    - name: Clean up
+      if: always()
+      run: |
+        docker stop security-app || true
+        docker rm security-app || true

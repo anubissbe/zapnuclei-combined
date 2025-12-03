@@ -3,50 +3,61 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ZAP Test Application</title>
+  <title>Security Scanner Demo API</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       max-width: 800px;
       margin: 50px auto;
       padding: 20px;
-      background: #f5f5f5;
+      background: #f8f9fa;
+      line-height: 1.6;
     }
-    h1 { color: #333; }
-    .warning {
-      background: #ff6b6b;
-      color: white;
-      padding: 15px;
-      border-radius: 5px;
-      margin-bottom: 20px;
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    h1 {
+      color: #343a40;
+      margin-bottom: 10px;
+    }
+    .subtitle {
+      color: #6c757d;
+      font-size: 1.1em;
+    }
+    .card {
+      background: white;
+      padding: 25px;
+      margin: 20px 0;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     .endpoint {
-      background: white;
-      padding: 15px;
-      margin: 10px 0;
-      border-radius: 5px;
-      border-left: 4px solid #4CAF50;
-    }
-    .endpoint.vulnerable {
-      border-left-color: #ff6b6b;
+      background: #e3f2fd;
+      padding: 12px 16px;
+      margin: 8px 0;
+      border-radius: 6px;
+      border-left: 4px solid #2196F3;
     }
     code {
-      background: #eee;
-      padding: 2px 6px;
-      border-radius: 3px;
+      background: #f8f9fa;
+      padding: 3px 6px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      color: #495057;
     }
-    a { color: #2196F3; }
-    form {
-      background: white;
-      padding: 20px;
-      border-radius: 5px;
-      margin: 20px 0;
+    a {
+      color: #007bff;
+      text-decoration: none;
     }
-    input {
-      padding: 10px;
-      margin: 5px;
-      border: 1px solid #ddd;
-      border-radius: 3px;
+    a:hover {
+      text-decoration: underline;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      color: #6c757d;
+      font-size: 0.9em;
     }
     button {
       padding: 10px 20px;
@@ -59,158 +70,62 @@
   </style>
 </head>
 <body>
-  <h1>🔍 ZAP Security Test Application</h1>
-  
-  <div class="warning">
-    ⚠️ WARNING: This application contains INTENTIONAL security vulnerabilities for testing purposes. 
-    DO NOT deploy to production!
+  <div class="header">
+    <h1>Security Scanner Demo API</h1>
+    <p class="subtitle">RESTful API for testing security scanning workflows</p>
   </div>
 
-  <h2>Test Endpoints</h2>
-  
-  <div class="endpoint vulnerable">
-    <strong>XSS Vulnerable Search</strong><br>
-    <code>GET /search?q=&lt;script&gt;alert('xss')&lt;/script&gt;</code><br>
-    <a href="/search?q=test">Try it: /search?q=test</a>
+  <div class="card">
+    <h2>Available Endpoints</h2>
+    
+    <div class="endpoint">
+      <strong>Health Check</strong><br>
+      <code>GET /health</code><br>
+      <a href="/health">Test endpoint: /health</a>
+    </div>
+
+    <div class="endpoint">
+      <strong>Service Status</strong><br>
+      <code>GET /api/status</code><br>
+      <a href="/api/status">Test endpoint: /api/status</a>
+    </div>
+
+    <div class="endpoint">
+      <strong>API Documentation</strong><br>
+      <code>GET /api/docs</code><br>
+      <a href="/api/docs">Test endpoint: /api/docs</a>
+    </div>
   </div>
 
-  <div class="endpoint vulnerable">
-    <strong>Open Redirect</strong><br>
-    <code>GET /redirect?url=https://evil.com</code><br>
-    <a href="/redirect?url=https://example.com">Try it: /redirect?url=https://example.com</a>
+  <div class="card">
+    <h2>About This API</h2>
+    <p>This is a minimal Node.js Express API designed for demonstrating security scanning workflows. It provides basic endpoints for health monitoring and service status reporting.</p>
+    
+    <h3>Features</h3>
+    <ul>
+      <li>Security headers implementation</li>
+      <li>JSON API responses</li>
+      <li>Error handling middleware</li>
+      <li>Health monitoring endpoints</li>
+    </ul>
   </div>
 
-  <div class="endpoint vulnerable">
-    <strong>Information Disclosure</strong><br>
-    <code>GET /api/user</code><br>
-    <a href="/api/user">Try it: /api/user</a>
+  <div class="card">
+    <h2>Integration</h2>
+    <p>This API is designed to work with:</p>
+    <ul>
+      <li><strong>OWASP ZAP</strong> - Web application security testing</li>
+      <li><strong>Nuclei</strong> - Vulnerability scanning</li>
+      <li><strong>GitHub Actions</strong> - CI/CD security workflows</li>
+      <li><strong>SARIF</strong> - Security results interchange format</li>
+    </ul>
   </div>
 
-  <div class="endpoint vulnerable">
-    <strong>Debug Info Exposure</strong><br>
-    <code>GET /api/products?id=1</code><br>
-    <a href="/api/products?id=1">Try it: /api/products?id=1</a>
+  <div class="footer">
+    <p>Security Scanner Demo API v1.0.0</p>
   </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Directory/File Listing</strong><br>
-    <code>GET /files</code><br>
-    <a href="/files">Try it: /files</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Insecure Cookie</strong><br>
-    <code>GET /login</code><br>
-    <a href="/login">Try it: /login</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Sensitive Data in URL</strong><br>
-    <code>GET /api/account?token=secret123</code><br>
-    <a href="/api/account?token=secret123">Try it: /api/account?token=secret123</a>
-  </div>
-
-  <div class="endpoint">
-    <strong>Health Check (Safe)</strong><br>
-    <code>GET /health</code><br>
-    <a href="/health">Try it: /health</a>
-  </div>
-
-  <h2>Search Form (XSS Test)</h2>
-  <form action="/search" method="GET">
-    <input type="text" name="q" placeholder="Search...">
-    <button type="submit">Search</button>
-  </form>
-
-  <h2>Expected ZAP Findings</h2>
-  <ul>
-    <li>Missing security headers (X-Frame-Options, CSP, etc.)</li>
-    <li>Cookie without HttpOnly/Secure flags</li>
-    <li>Reflected XSS</li>
-    <li>Open redirect</li>
-    <li>Information disclosure</li>
-    <li>Missing CSRF tokens</li>
-    <li>Application error disclosure</li>
-  </ul>
-
-  <h2>Nuclei Test Endpoints</h2>
-  
-  <div class="endpoint vulnerable">
-    <strong>Exposed .env File</strong><br>
-    <code>GET /.env</code><br>
-    <a href="/.env">Try it: /.env</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Exposed Git Config</strong><br>
-    <code>GET /.git/config</code><br>
-    <a href="/.git/config">Try it: /.git/config</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Debug/System Info</strong><br>
-    <code>GET /debug/info</code><br>
-    <a href="/debug/info">Try it: /debug/info</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Exposed Backup SQL</strong><br>
-    <code>GET /backup.sql</code><br>
-    <a href="/backup.sql">Try it: /backup.sql</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Server Status Page</strong><br>
-    <code>GET /server-status</code><br>
-    <a href="/server-status">Try it: /server-status</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Exposed Config File</strong><br>
-    <code>GET /config.json</code><br>
-    <a href="/config.json">Try it: /config.json</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Admin Panel</strong><br>
-    <code>GET /admin</code><br>
-    <a href="/admin">Try it: /admin</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Exposed Access Logs</strong><br>
-    <code>GET /logs/access.log</code><br>
-    <a href="/logs/access.log">Try it: /logs/access.log</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Swagger API Docs</strong><br>
-    <code>GET /swagger.json</code><br>
-    <a href="/swagger.json">Try it: /swagger.json</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>GraphQL Endpoint</strong><br>
-    <code>POST /graphql</code><br>
-    <a href="/graphql">Try it: /graphql</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Prometheus Metrics</strong><br>
-    <code>GET /metrics</code><br>
-    <a href="/metrics">Try it: /metrics</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>Actuator Env</strong><br>
-    <code>GET /actuator/env</code><br>
-    <a href="/actuator/env">Try it: /actuator/env</a>
-  </div>
-
-  <div class="endpoint vulnerable">
-    <strong>WP Config Backup</strong><br>
-    <code>GET /wp-config.php.bak</code><br>
-    <a href="/wp-config.php.bak">Try it: /wp-config.php.bak</a>
+</body>
+</html>
   </div>
 
   <div class="endpoint vulnerable">

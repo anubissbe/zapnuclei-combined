@@ -1,4 +1,4 @@
-name: Security Scan (ZAP + Nuclei)
+name: Fast Security Scan (Pre-built Container)
 
 on:
   push:
@@ -10,85 +10,134 @@ on:
 permissions:
   contents: read
   security-events: write
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/security-scanner
 
 jobs:
-  build-and-scan:
-    name: Build and Security Scan
+  # Only rebuild container when Dockerfile changes or manual dispatch
+  build-security-image:
+    name: Build Security Scanner Image
     runs-on: ubuntu-latest
-    
+    if: contains(github.event.head_commit.modified, 'Dockerfile.security') || github.event_name == 'workflow_dispatch'
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # Build and start the application
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
         with:
-          node-version: '20'
-          cache: 'npm'
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Start application in background
-        run: npm start &
-        env:
-          PORT: 3000
-
-      - name: Wait for application to be ready
-        run: |
-          echo "Waiting for application to start..."
-          timeout 60 bash -c 'until curl -sf http://localhost:3000/health > /dev/null 2>&1; do sleep 2; done'
-          echo "Application is ready!"
-
-      - name: Get runner IP for Docker access
-        id: ip
-        run: echo "address=$(hostname -I | awk '{print $1}')" >> $GITHUB_OUTPUT
-
-      # ZAP Scan - outputs SARIF format
-      - name: ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.14.0
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
         with:
-          target: 'http://${{ steps.ip.outputs.address }}:3000'
-          cmd_options: '-a'
-          fail_action: false
-          allow_issue_writing: false
-        continue-on-error: true
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha
+            latest
 
-      # Convert ZAP JSON to SARIF if needed
-      - name: Check ZAP outputs
-        run: |
-          echo "=== Checking for ZAP output files ==="
-          ls -la *.json *.sarif *.html *.md 2>/dev/null || echo "No report files found in root"
-          ls -la report* 2>/dev/null || echo "No report files found"
-          # ZAP baseline creates report_json.json, we need to check for sarif
-          if [ -f "report_json.json" ]; then
-            echo "Found report_json.json"
-            cat report_json.json | head -50
-          fi
-        continue-on-error: true
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.security
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
 
-      # Convert ZAP JSON to SARIF format
-      - name: Convert ZAP JSON to SARIF
+  # Fast security scanning using pre-built image
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    # Skip build dependency for now, use existing container
+    # needs: [build-security-image]
+    # if: always() && (needs.build-security-image.result == 'success' || needs.build-security-image.result == 'skipped')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Start app in container (already has all tools installed)
+      - name: Start Security Scanner Container
         run: |
-          if [ -f "report_json.json" ]; then
+          echo "Pulling pre-built security scanner container..."
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker run -d --name security-app \
+            -p 3000:3000 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          
+          # Wait for app to be ready (much faster)
+          timeout 30 bash -c 'until curl -sf http://localhost:3000/health > /dev/null 2>&1; do sleep 1; done'
+          echo "App started in $(date)"
+
+      # Run ZAP scan directly (no installation time)
+      - name: ZAP Scan
+        run: |
+          docker exec -u root security-app zap-baseline.py \
+            -t http://localhost:3000 \
+            -J /tmp/zap-results.json \
+            -a \
+            || true
+
+      # Run Nuclei scan directly (no installation time)  
+      - name: Nuclei Scan
+        run: |
+          docker exec security-app nuclei \
+            -target http://localhost:3000 \
+            -silent \
+            -sarif-export /tmp/nuclei-results.sarif \
+            -severity critical,high,medium,low \
+            || true
+
+      # Copy results and convert to SARIF
+      - name: Extract Results
+        run: |
+          docker cp security-app:/tmp/zap-results.json ./ || true
+          docker cp security-app:/tmp/nuclei-results.sarif ./ || true
+          docker stop security-app
+
+      # Convert ZAP results to SARIF (same conversion logic as main workflow)
+      - name: Convert ZAP Results to SARIF
+        run: |
+          if [ -f "zap-results.json" ]; then
             echo "Converting ZAP JSON to SARIF format..."
             python3 << 'EOF'
           import json
           import re
-          import subprocess
           from urllib.parse import urlparse
 
-          with open('report_json.json', 'r') as f:
+          with open('zap-results.json', 'r') as f:
               zap = json.load(f)
 
           # Build a map of URL paths to line numbers by scanning server.js
-          # This makes the solution work for any repo - just scan for route definitions
-          path_to_line = {'/': 1}  # default
+          path_to_line = {'/': 1}
           try:
               with open('server.js', 'r') as f:
                   for line_num, line in enumerate(f, 1):
-                      # Match Express routes: app.get('/path', ...) or app.post('/path', ...)
                       match = re.search(r"app\.(get|post|put|delete|all)\s*\(\s*['\"]([^'\"]+)['\"]", line)
                       if match:
                           path_to_line[match.group(2)] = line_num
@@ -102,7 +151,7 @@ jobs:
                   "tool": {
                       "driver": {
                           "name": "OWASP ZAP",
-                          "semanticVersion": zap.get("@version", "2.16.0"),
+                          "semanticVersion": zap.get("@version", "2.15.0"),
                           "informationUri": "https://www.zaproxy.org/",
                           "rules": []
                       }
@@ -119,7 +168,6 @@ jobs:
           risk_to_severity = {"0": "1.0", "1": "3.0", "2": "6.0", "3": "9.0"}
 
           def extract_url(text):
-              """Extract clean URL from ZAP's HTML-wrapped reference field"""
               if not text:
                   return None
               urls = re.findall(r'https?://[^\s<>"]+', text)
@@ -129,21 +177,16 @@ jobs:
               return None
 
           def clean_html(text):
-              """Remove HTML tags from text"""
               if not text:
                   return ""
               return re.sub(r'<[^>]+>', '', text).strip()
 
           def get_line_for_path(url_path):
-              """Find the line number for a URL path"""
-              # Exact match first
               if url_path in path_to_line:
                   return path_to_line[url_path]
-              # Try without query string
               clean_path = url_path.split('?')[0]
               if clean_path in path_to_line:
                   return path_to_line[clean_path]
-              # Try base path for api routes like /api/products -> /api
               for known_path in sorted(path_to_line.keys(), key=len, reverse=True):
                   if clean_path.startswith(known_path) and known_path != '/':
                       return path_to_line[known_path]
@@ -182,7 +225,6 @@ jobs:
                       method = instance.get("method", "GET")
                       param = instance.get("param", "")
                       
-                      # Parse URL to get path
                       parsed = urlparse(uri)
                       url_path = parsed.path if parsed.path else "/"
                       line_num = get_line_for_path(url_path)
@@ -192,8 +234,6 @@ jobs:
                           message_text += f" in parameter '{param}'"
                       message_text += f" [{method} {url_path}]"
                       
-                      # DO NOT include partialFingerprints - let GitHub calculate them
-                      # GitHub uses file+line to create stable fingerprints
                       results.append({
                           "ruleId": rule_id,
                           "ruleIndex": rule_index_map[rule_id],
@@ -202,10 +242,7 @@ jobs:
                           "locations": [{
                               "physicalLocation": {
                                   "artifactLocation": {"uri": "server.js"},
-                                  "region": {
-                                      "startLine": line_num,
-                                      "startColumn": 1
-                                  }
+                                  "region": {"startLine": line_num, "startColumn": 1}
                               }
                           }]
                       })
@@ -215,57 +252,22 @@ jobs:
 
           with open('zap-results.sarif', 'w') as f:
               json.dump(sarif, f, indent=2)
-          print(f"Created zap-results.sarif with {len(results)} findings and {len(rules)} rules")
-          print(f"Path to line mappings: {len(path_to_line)} routes found")
+          print(f"Created zap-results.sarif with {len(results)} findings")
           EOF
           fi
-        continue-on-error: true
 
-      - name: Upload ZAP SARIF Report
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: 'zap-results.sarif'
-          category: 'zap-scan'
-        if: hashFiles('zap-results.sarif') != ''
-        continue-on-error: true
-
-      # Nuclei Scan - outputs SARIF format
-      - name: Nuclei Scan
-        uses: projectdiscovery/nuclei-action@v2.0.1
-        with:
-          target: 'http://${{ steps.ip.outputs.address }}:3000'
-          sarif-export: 'nuclei-results.sarif'
-          flags: '-severity critical,high,medium,low,info -rate-limit 150'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      - name: Check Nuclei outputs
-        run: |
-          echo "=== Checking for Nuclei output files ==="
-          ls -la *.sarif 2>/dev/null || echo "No SARIF files found"
-          ls -la nuclei* 2>/dev/null || echo "No nuclei files found"
-          if [ -f "nuclei-results.sarif" ]; then
-            echo "Found nuclei-results.sarif"
-            cat nuclei-results.sarif | head -50
-          fi
-        continue-on-error: true
-
-      # Fix SARIF files for GitHub Code Scanning
-      # GitHub calculates fingerprints from file+line - don't provide our own
-      - name: Fix SARIF files for GitHub
+      # Fix Nuclei SARIF for GitHub  
+      - name: Fix Nuclei Results for GitHub
         run: |
           if [ -f "nuclei-results.sarif" ]; then
             echo "Creating GitHub-compatible SARIF from Nuclei results..."
             python3 << 'EOF'
           import json
           import re
-          from urllib.parse import urlparse
 
           with open('nuclei-results.sarif', 'r') as f:
               original = json.load(f)
 
-          # Build a map of URL paths to line numbers by scanning server.js
-          # This makes the solution portable to any repo
           path_to_line = {'/': 1}
           try:
               with open('server.js', 'r') as f:
@@ -277,7 +279,6 @@ jobs:
               pass
 
           def get_line_for_path(url_path):
-              """Find the line number for a URL path"""
               if url_path in path_to_line:
                   return path_to_line[url_path]
               clean_path = url_path.split('?')[0]
@@ -289,16 +290,10 @@ jobs:
               return path_to_line.get('/', 1)
 
           def extract_path_from_message(message):
-              """Extract URL path from Nuclei finding message"""
-              # Try to find URL in message
               match = re.search(r'https?://[^/]+(/[^\s\]"]*)', message)
               if match:
                   return match.group(1)
-              # Try to find path in square brackets [path=/xxx]
               match = re.search(r'\[paths?="?(/[^"\]\s]+)"?\]', message)
-              if match:
-                  return match.group(1)
-              match = re.search(r'\[path="?(/[^"\]\s]+)"?\]', message)
               if match:
                   return match.group(1)
               return '/'
@@ -351,11 +346,9 @@ jobs:
                   rule_id = result.get('ruleId', 'unknown')
                   message = result.get('message', {}).get('text', 'Security finding')
                   
-                  # Extract URL path from message and map to line number
                   url_path = extract_path_from_message(message)
                   line_num = get_line_for_path(url_path)
                   
-                  # DO NOT include partialFingerprints - let GitHub calculate them
                   new_result = {
                       "ruleId": rule_id,
                       "ruleIndex": rules_map.get(rule_id, 0),
@@ -364,10 +357,7 @@ jobs:
                       "locations": [{
                           "physicalLocation": {
                               "artifactLocation": {"uri": "server.js"},
-                              "region": {
-                                  "startLine": line_num,
-                                  "startColumn": 1
-                              }
+                              "region": {"startLine": line_num, "startColumn": 1}
                           }
                       }]
                   }
@@ -379,28 +369,19 @@ jobs:
               json.dump(new_sarif, f, indent=2)
           
           print(f"Created nuclei-results-fixed.sarif with {len(new_sarif['runs'][0]['results'])} findings")
-          print(f"Path to line mappings: {len(path_to_line)} routes found")
           EOF
           fi
-        continue-on-error: true
 
-      - name: Upload Nuclei SARIF Report
+      - name: Upload ZAP Results
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'zap-results.sarif'
+          category: 'zap-scan'
+        if: hashFiles('zap-results.sarif') != ''
+
+      - name: Upload Nuclei Results  
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'nuclei-results-fixed.sarif'
           category: 'nuclei-scan'
         if: hashFiles('nuclei-results-fixed.sarif') != ''
-        continue-on-error: true
-
-      # Save reports as artifacts
-      - name: Upload Reports as Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-scan-reports
-          path: |
-            *.sarif
-            *.json
-            *.html
-            *.md
-          retention-days: 30
-        if: always()

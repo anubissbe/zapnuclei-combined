@@ -1,0 +1,28 @@
+# Dependabot configuration for security scanning project
+# Updates npm dependencies and GitHub Actions automatically
+
+version: 2
+updates:
+  # Enable version updates for npm (Node.js dependencies)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    assignees:
+      - "anubissbe"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # Enable version updates for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    assignees:
+      - "anubissbe"
+    commit-message:
+      prefix: "ci"
+      include: "scope"

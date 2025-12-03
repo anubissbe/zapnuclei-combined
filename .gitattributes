@@ -1,0 +1,40 @@
+# Auto-detect text files and perform LF normalization
+* text=auto
+
+# Explicitly define file types
+*.md text
+*.yml text
+*.yaml text
+*.json text
+*.js text
+*.html text
+*.css text
+*.dockerfile text
+Dockerfile text
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+
+# Archive files
+*.zip binary
+*.tar binary
+*.gz binary
+
+# Security report files (often large)
+*.sarif linguist-generated=true
+*.jsonl linguist-generated=true
+
+# GitHub Actions workflow files
+.github/workflows/* linguist-language=YAML
+
+# Documentation
+*.md linguist-documentation
+
+# Ignore generated files in language statistics
+security-reports-inline/* linguist-generated=true
+node_modules/* linguist-vendored
