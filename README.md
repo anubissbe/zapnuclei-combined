@@ -1,75 +1,296 @@
-# ZAP Security Scan Test Application
+# Complete Security Scanning with ZAP & Nuclei
 
-A sample Node.js application with **intentional security vulnerabilities** for testing OWASP ZAP and Nuclei security scanning workflows.
+A production-ready GitHub Actions workflow that integrates **OWASP ZAP** (DAST) and **Nuclei** vulnerability scanning with **GitHub Advanced Security** (Code Scanning). Includes a sample vulnerable Node.js app for testing.
 
 ## ⚠️ WARNING
 
 This application contains intentional security vulnerabilities for educational and testing purposes. **DO NOT deploy to production!**
 
-## Quick Start
+---
+
+## 🚀 Features
+
+✅ **OWASP ZAP** baseline scan (DAST 
+- Dynamic Application Security Testing)
+
+✅ **Nuclei** vulnerability scan (8,855+ templates)
+✅ **GitHub Code Scanning** integration (SARIF upload)
+✅ **Zero warnings** 
+- properly formatted SARIF files
+
+✅ **Localhost scanning** 
+- scans during CI/CD build
+
+✅ **Portable solution** 
+- works on any Express.js app
+
+✅ **Intelligent mapping** 
+- findings mapped to actual source code lines
+
+## 📋 Quick Start
+
+### 1. Copy the Workflow
+
+Copy `.github/workflows/security-scan-combined.yml` to your repository.
+
+### 2. Enable GitHub Advanced Security
+
+- Go to your repo **Settings** → **Code security and analysis**
+- Enable **Code scanning**
+
+### 3. Run the Workflow
+
+The workflow triggers on:
+
+- Push to `main`/`master`
+- Pull requests
+- Manual dispatch
+
+### 4. View Results
+
+- **Security alerts**: `https://github.com/YOUR_USER/YOUR_REPO/security/code-scanning`
+- **Workflow artifacts**: Download reports from Actions tab---
+
+## 🔧 How It Works
+
+### The Challenge
+
+DAST tools (ZAP/Nuclei) scan **running applications** (URLs), but GitHub Code Scanning expects **static analysis** results pointing to source files. This creates a mismatch.
+
+### The Solution
+
+Our workflow solves this by:
+
+1. **Building and starting the app** on `localhost` during CI
+2. **Scanning the running app** with ZAP and Nuclei
+3. **Converting results to SARIF** format
+4. **Mapping findings to source lines** by parsing route definitions in `server.js`
+5. **Uploading to GitHub Code Scanning** with proper fingerprints
+
+### Technical Details
+
+```yaml
+# Key workflow steps:
+- Build Node.js app
+- Start on localhost:3000
+- Get runner IP for Docker access
+- ZAP baseline scan → JSON → SARIF conversion
+- Nuclei scan → SARIF format
+- Map URLs to source lines (/.env → line 131)
+- Upload both SARIF files to GitHub
+```
+
+---
+
+## 📊 Expected Results
+
+### ZAP Findings (~101 alerts)
+- **Cross-Site Scripting (XSS)** 
+- Reflected in `/search` endpoint
+- **Open Redirect** - Unvalidated redirect in `/redirect`
+- **Missing Security Headers** - CSP, X-Frame-Options, etc.
+- **Insecure Cookies** - Missing HttpOnly, Secure flags
+- **Information Disclosure** - Debug info in responses
+- **CSRF** - Missing anti-CSRF tokens
+
+### Nuclei Findings (~8 alerts)
+- **Environment Files** 
+- `.env` exposure
+- **Configuration Files** - `config.json`, `swagger.json`
+- **Backup Files** - `backup.sql` with credentials
+- **Git Exposure** - `.git/config` file
+- **GraphQL** - Introspection enabled
+- **MySQL Dumps** - Database backup files
+
+---
+
+## 🛠️ Customization
+
+### For Your Application
+
+The workflow automatically detects Express.js routes by scanning for patterns:
+```javascript
+app.get('/api/users', ...)     // Maps to line 45
+app.post('/login', ...)        // Maps to line 89
+app.all('/graphql', ...)       // Maps to line 156
+```
+
+### For Other Frameworks
+
+Modify the route detection regex in the SARIF conversion scripts:
+
+```python
+# For Express.js (default)
+match = re.search(r"app\.(get|post|put|delete|all)\s*\(\s*['\"]([^'\"]+)['\"]", line)
+
+# For Flask
+match = re.search(r"@app\.route\s*\(\s*['\"]([^'\"]+)['\"]", line)
+
+# For FastAPI
+match = re.search(r"@app\.(get|post|put|delete)\s*\(\s*['\"]([^'\"]+)['\"]", line)
+```
+
+### Scanning External URLs
+
+To scan an already-deployed application:
+```yaml
+# Replace localhost scanning with external URL
+- name: ZAP Baseline Scan
+  uses: zaproxy/action-baseline@v0.14.0
+  with:
+    target: 'https://your-app.com'  # Your deployed app
+```
+
+---
+
+## 🔍 Test Application
+
+Included vulnerable Node.js app for testing:
 
 ```bash
-# Install dependencies
 npm install
-
-# Start the application
-npm start
-
-# App runs on http://localhost:3000
+npm start  # Runs on http://localhost:3000
 ```
 
-## GitHub Actions Workflows
+### Vulnerable Endpoints
 
-This repository includes several security scanning workflows:
+| Path | Vulnerability | Scanner |
+|------|--------------|---------|
+| `/search?q=<script>` | Reflected XSS | ZAP |
+| `/redirect?url=evil.com` | Open Redirect | ZAP |
+| `/login` | CSRF, Insecure Cookies | ZAP |
+| `/.env` | Environment Exposure | Nuclei |
+| `/config.json` | Config Exposure | Nuclei |
+| `/backup.sql` | Database Dump | Nuclei |
+| `/graphql` | GraphQL Introspection | Nuclei |
 
-| Workflow | Description |
-|----------|-------------|
-| `zap-scan.yml` | Basic ZAP scan against external URL |
-| `zap-scan-full.yml` | Full ZAP scan with build steps |
-| `zap-scan-on-build.yml` | ZAP scan during build (scans localhost) |
-| `nuclei-scan.yml` | Nuclei vulnerability scan |
-| `security-scan-combined.yml` | Combined ZAP + Nuclei scan |
+---
 
-## Intentional Vulnerabilities
+## 📈 GitHub Security Integration
 
-The following vulnerabilities are intentionally included for testing:
+### Code Scanning Alerts
 
-1. **Reflected XSS** - `/search?q=<script>alert('xss')</script>`
-2. **Open Redirect** - `/redirect?url=https://evil.com`
-3. **Information Disclosure** - `/api/user` exposes internal IDs
-4. **Missing Security Headers** - No CSP, X-Frame-Options, etc.
-5. **Insecure Cookies** - Missing HttpOnly, Secure, SameSite flags
-6. **CSRF Vulnerability** - Login form without CSRF token
-7. **Sensitive Data in URL** - `/api/account?token=secret`
-8. **Error Stack Traces** - Exposed in error responses
-9. **Directory Listing** - `/files` exposes file structure
+Findings appear in **GitHub Security** tab with:
+- **Severity levels** (Critical, High, Medium, Low)
+- **Source code locations** (mapped to actual lines)
+- **Descriptions and solutions**
+- **SARIF compliance** (no warnings)
 
-## Expected ZAP Findings
+### Advanced Features
+- **Pull Request annotations** 
+- Findings shown in PR diffs
+- **Historical tracking** - Alert trends over time
+- **Status checks** - Optional: fail builds on high severity
+- **Security advisories** - Integration with vulnerability database
 
-When you run ZAP against this application, expect alerts for:
+---
 
-- Missing Anti-CSRF Tokens
-- Cookie Without HttpOnly Flag
-- Cookie Without Secure Flag
-- Missing Content Security Policy
-- Missing X-Frame-Options Header
-- Missing X-Content-Type-Options Header
-- Application Error Disclosure
-- Information Disclosure
-- Cross-Site Scripting (Reflected)
+## 🚦 CI/CD Integration
 
-## Test Locally
+### Basic Usage
 
+```yaml
+# Minimal workflow
+on: [push, pull_request]
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      
+- uses: actions/checkout@v4
+
+      # ... build steps ...
+      
+- name: Security Scan
+
+        uses: ./.github/workflows/security-scan-combined.yml
+```
+
+### Advanced Configuration
+
+```yaml
+# With custom thresholds
+- name: Check Results
+  run: |
+    # Fail build on critical/high findings
+    CRITICAL=$(jq '.runs[0].results | map(select(.level=="error")) | length' zap-results.sarif)
+    if [ "$CRITICAL" -gt 0 ]; then exit 1; fi
+```
+
+---
+
+## 🏆 Best Practices
+
+### ✅ Do
+- Enable **GitHub Advanced Security** in repo settings
+- Use **CodeQL Action v4** (v3 deprecated December 2026)
+- Map findings to **actual source lines** for better tracking
+- Let GitHub **calculate fingerprints** (don't provide custom ones)
+- Use **localhost scanning** during build for accurate results
+
+### ❌ Don't
+- Provide custom `partialFingerprints` (causes warnings)
+- Map all findings to line 1 (creates fingerprint conflicts)
+- Use invalid action inputs (check documentation)
+- Scan external URLs without authentication (limited coverage)
+- Include sensitive credentials in test apps
+
+---
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+**"Fingerprint warnings"**
 ```bash
-# Run the app
-npm start
-
-# In another terminal, run ZAP Docker scan
-docker run -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-  -t http://host.docker.internal:3000 \
-  -J report.json
+# Fixed by removing custom partialFingerprints
+# Let GitHub calculate them based on file + line
 ```
 
-## License
+**"URI cannot be parsed to file path"**
+```bash
+# Fixed by mapping URLs to actual source files
+# Don't use fake paths like "web/index"
+```
 
-MIT - For educational purposes only.
+**"Invalid action inputs"**
+```bash
+# Use 'flags' instead of individual parameters
+flags: '-severity critical,high -rate-limit 150'
+```
+
+**"App not ready for scanning"**
+```bash
+# Increase wait timeout or add health check
+timeout 60 bash -c 'until curl -f http://localhost:3000/health; do sleep 2; done'
+```
+
+---
+
+## 📝 License
+
+MIT License 
+- For educational and security testing purposes only.
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Test with your application
+4. Submit a pull request
+
+**Security researchers welcome!** Help improve the vulnerable test app or scanning accuracy.
+
+---
+
+## 📚 Resources
+
+- [OWASP ZAP Documentation](https://www.zaproxy.org/docs/)
+- [Nuclei Templates](https://github.com/projectdiscovery/nuclei-templates)
+- [GitHub Code Scanning](https://docs.github.com/en/code-security/code-scanning)
+- [SARIF Format Specification](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
+- [Security Scanning Best Practices](https://owasp.org/www-community/Source_Code_Analysis_Tools)
