@@ -54,7 +54,7 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     needs: [build-security-image]
-    if: always() && !failure()
+    if: always() && (needs.build-security-image.result == 'success' || needs.build-security-image.result == 'skipped')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -80,9 +80,10 @@ jobs:
       # Run ZAP scan directly (no installation time)
       - name: ZAP Scan
         run: |
-          docker exec security-app zap-baseline.py \
+          docker exec -u root security-app zap-baseline.py \
             -t http://localhost:3000 \
-            -J /app/zap-results.json \
+            -J /tmp/zap-results.json \
+            -a \
             || true
 
       # Run Nuclei scan directly (no installation time)  
@@ -91,23 +92,268 @@ jobs:
           docker exec security-app nuclei \
             -target http://localhost:3000 \
             -silent \
-            -sarif-export /app/nuclei-results.sarif \
+            -sarif-export /tmp/nuclei-results.sarif \
+            -severity critical,high,medium,low \
             || true
 
       # Copy results and convert to SARIF
       - name: Extract Results
         run: |
-          docker cp security-app:/app/zap-results.json ./ || true
-          docker cp security-app:/app/nuclei-results.sarif ./ || true
+          docker cp security-app:/tmp/zap-results.json ./ || true
+          docker cp security-app:/tmp/nuclei-results.sarif ./ || true
           docker stop security-app
 
-      # Convert ZAP results to SARIF (same conversion logic)
-      - name: Convert Results
+      # Convert ZAP results to SARIF (same conversion logic as main workflow)
+      - name: Convert ZAP Results to SARIF
         run: |
-          # Same Python conversion script as before
-          python3 << 'EOF'
-          # ... (same SARIF conversion code)
+          if [ -f "zap-results.json" ]; then
+            echo "Converting ZAP JSON to SARIF format..."
+            python3 << 'EOF'
+          import json
+          import re
+          from urllib.parse import urlparse
+
+          with open('zap-results.json', 'r') as f:
+              zap = json.load(f)
+
+          # Build a map of URL paths to line numbers by scanning server.js
+          path_to_line = {'/': 1}
+          try:
+              with open('server.js', 'r') as f:
+                  for line_num, line in enumerate(f, 1):
+                      match = re.search(r"app\.(get|post|put|delete|all)\s*\(\s*['\"]([^'\"]+)['\"]", line)
+                      if match:
+                          path_to_line[match.group(2)] = line_num
+          except FileNotFoundError:
+              pass
+
+          sarif = {
+              "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+              "version": "2.1.0",
+              "runs": [{
+                  "tool": {
+                      "driver": {
+                          "name": "OWASP ZAP",
+                          "semanticVersion": zap.get("@version", "2.15.0"),
+                          "informationUri": "https://www.zaproxy.org/",
+                          "rules": []
+                      }
+                  },
+                  "results": []
+              }]
+          }
+
+          rules = {}
+          results = []
+          rule_index_map = {}
+
+          risk_to_level = {"0": "note", "1": "note", "2": "warning", "3": "error"}
+          risk_to_severity = {"0": "1.0", "1": "3.0", "2": "6.0", "3": "9.0"}
+
+          def extract_url(text):
+              if not text:
+                  return None
+              urls = re.findall(r'https?://[^\s<>"]+', text)
+              for url in urls:
+                  if url.startswith('http'):
+                      return url.rstrip('.,;:')
+              return None
+
+          def clean_html(text):
+              if not text:
+                  return ""
+              return re.sub(r'<[^>]+>', '', text).strip()
+
+          def get_line_for_path(url_path):
+              if url_path in path_to_line:
+                  return path_to_line[url_path]
+              clean_path = url_path.split('?')[0]
+              if clean_path in path_to_line:
+                  return path_to_line[clean_path]
+              for known_path in sorted(path_to_line.keys(), key=len, reverse=True):
+                  if clean_path.startswith(known_path) and known_path != '/':
+                      return path_to_line[known_path]
+              return path_to_line.get('/', 1)
+
+          for site in zap.get("site", []):
+              for alert in site.get("alerts", []):
+                  rule_id = f"zap-{alert.get('pluginid', 'unknown')}"
+                  alert_name = alert.get("name", "Unknown")
+                  
+                  if rule_id not in rules:
+                      help_uri = extract_url(alert.get("reference", ""))
+                      
+                      rule = {
+                          "id": rule_id,
+                          "name": alert_name.replace(" ", "")[:512],
+                          "shortDescription": {"text": alert_name[:1024]},
+                          "fullDescription": {"text": clean_html(alert.get("desc", "Security issue detected"))[:1024]},
+                          "help": {
+                              "text": clean_html(alert.get("solution", "Review and fix this security issue.")),
+                              "markdown": f"**{alert_name}**\n\n{clean_html(alert.get('solution', ''))}"
+                          },
+                          "properties": {
+                              "security-severity": risk_to_severity.get(alert.get("riskcode", "1"), "5.0"),
+                              "tags": ["security", "zap"]
+                          }
+                      }
+                      if help_uri:
+                          rule["helpUri"] = help_uri
+                      
+                      rule_index_map[rule_id] = len(rules)
+                      rules[rule_id] = rule
+                  
+                  for instance in alert.get("instances", []):
+                      uri = instance.get("uri", "")
+                      method = instance.get("method", "GET")
+                      param = instance.get("param", "")
+                      
+                      parsed = urlparse(uri)
+                      url_path = parsed.path if parsed.path else "/"
+                      line_num = get_line_for_path(url_path)
+                      
+                      message_text = f"{alert_name}"
+                      if param:
+                          message_text += f" in parameter '{param}'"
+                      message_text += f" [{method} {url_path}]"
+                      
+                      results.append({
+                          "ruleId": rule_id,
+                          "ruleIndex": rule_index_map[rule_id],
+                          "level": risk_to_level.get(alert.get("riskcode", "1"), "warning"),
+                          "message": {"text": message_text[:1024]},
+                          "locations": [{
+                              "physicalLocation": {
+                                  "artifactLocation": {"uri": "server.js"},
+                                  "region": {"startLine": line_num, "startColumn": 1}
+                              }
+                          }]
+                      })
+
+          sarif["runs"][0]["tool"]["driver"]["rules"] = list(rules.values())
+          sarif["runs"][0]["results"] = results
+
+          with open('zap-results.sarif', 'w') as f:
+              json.dump(sarif, f, indent=2)
+          print(f"Created zap-results.sarif with {len(results)} findings")
           EOF
+          fi
+
+      # Fix Nuclei SARIF for GitHub  
+      - name: Fix Nuclei Results for GitHub
+        run: |
+          if [ -f "nuclei-results.sarif" ]; then
+            echo "Creating GitHub-compatible SARIF from Nuclei results..."
+            python3 << 'EOF'
+          import json
+          import re
+
+          with open('nuclei-results.sarif', 'r') as f:
+              original = json.load(f)
+
+          path_to_line = {'/': 1}
+          try:
+              with open('server.js', 'r') as f:
+                  for line_num, line in enumerate(f, 1):
+                      match = re.search(r"app\.(get|post|put|delete|all)\s*\(\s*['\"]([^'\"]+)['\"]", line)
+                      if match:
+                          path_to_line[match.group(2)] = line_num
+          except FileNotFoundError:
+              pass
+
+          def get_line_for_path(url_path):
+              if url_path in path_to_line:
+                  return path_to_line[url_path]
+              clean_path = url_path.split('?')[0]
+              if clean_path in path_to_line:
+                  return path_to_line[clean_path]
+              for known_path in sorted(path_to_line.keys(), key=len, reverse=True):
+                  if clean_path.startswith(known_path) and known_path != '/':
+                      return path_to_line[known_path]
+              return path_to_line.get('/', 1)
+
+          def extract_path_from_message(message):
+              match = re.search(r'https?://[^/]+(/[^\s\]"]*)', message)
+              if match:
+                  return match.group(1)
+              match = re.search(r'\[paths?="?(/[^"\]\s]+)"?\]', message)
+              if match:
+                  return match.group(1)
+              return '/'
+
+          new_sarif = {
+              "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+              "version": "2.1.0",
+              "runs": []
+          }
+
+          for run in original.get('runs', []):
+              tool = run.get('tool', {}).get('driver', {})
+              
+              new_run = {
+                  "tool": {
+                      "driver": {
+                          "name": tool.get('name', 'Nuclei'),
+                          "semanticVersion": tool.get('semanticVersion', '3.0.0').lstrip('v'),
+                          "informationUri": "https://github.com/projectdiscovery/nuclei",
+                          "rules": []
+                      }
+                  },
+                  "results": []
+              }
+              
+              rules_map = {}
+              for rule in tool.get('rules', []):
+                  rule_id = rule.get('id', 'unknown')
+                  short_desc = rule.get('shortDescription', {}).get('text', rule_id)
+                  full_desc = rule.get('fullDescription', {}).get('text', 'Security finding')
+                  
+                  new_rule = {
+                      "id": rule_id,
+                      "name": rule_id.replace("-", "").replace(":", "").title()[:512],
+                      "shortDescription": {"text": short_desc[:1024]},
+                      "fullDescription": {"text": full_desc[:1024] if full_desc else "Security finding detected"},
+                      "help": {
+                          "text": f"Security vulnerability detected: {short_desc}",
+                          "markdown": f"**{short_desc}**\n\nDetected by Nuclei vulnerability scanner."
+                      },
+                      "properties": {
+                          "security-severity": str(rule.get('properties', {}).get('security-severity', '5.0')),
+                          "tags": ["security", "nuclei"]
+                      }
+                  }
+                  rules_map[rule_id] = len(new_run["tool"]["driver"]["rules"])
+                  new_run["tool"]["driver"]["rules"].append(new_rule)
+              
+              for result in run.get('results', []):
+                  rule_id = result.get('ruleId', 'unknown')
+                  message = result.get('message', {}).get('text', 'Security finding')
+                  
+                  url_path = extract_path_from_message(message)
+                  line_num = get_line_for_path(url_path)
+                  
+                  new_result = {
+                      "ruleId": rule_id,
+                      "ruleIndex": rules_map.get(rule_id, 0),
+                      "level": "warning",
+                      "message": {"text": message[:1024]},
+                      "locations": [{
+                          "physicalLocation": {
+                              "artifactLocation": {"uri": "server.js"},
+                              "region": {"startLine": line_num, "startColumn": 1}
+                          }
+                      }]
+                  }
+                  new_run["results"].append(new_result)
+              
+              new_sarif["runs"].append(new_run)
+
+          with open('nuclei-results-fixed.sarif', 'w') as f:
+              json.dump(new_sarif, f, indent=2)
+          
+          print(f"Created nuclei-results-fixed.sarif with {len(new_sarif['runs'][0]['results'])} findings")
+          EOF
+          fi
 
       - name: Upload ZAP Results
         uses: github/codeql-action/upload-sarif@v4
