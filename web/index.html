@@ -1,1 +1,0 @@
-# Security scan placeholder
