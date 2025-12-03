@@ -116,7 +116,7 @@ jobs:
           timeout 20 bash -c 'until curl -sf http://localhost:3000/health; do sleep 1; done'
 
       - name: Nuclei Scan
-        uses: projectdiscovery/nuclei-action@v2.0.1
+        uses: projectdiscovery/nuclei-action@v2.0.2
         with:
           target: 'http://localhost:3000'
           sarif-export: 'nuclei-results.sarif'
