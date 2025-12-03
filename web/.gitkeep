@@ -1,0 +1,2 @@
+# This directory is used as a reference for SARIF security scan results
+# Dynamic security scanners (ZAP, Nuclei) scan URLs which are mapped to pseudo-files here
