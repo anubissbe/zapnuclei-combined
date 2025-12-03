@@ -190,6 +190,7 @@ jobs:
             echo "Converting Nuclei SARIF for GitHub compatibility..."
             python3 << 'EOF'
           import json
+          from urllib.parse import urlparse
 
           with open('nuclei-results.sarif', 'r') as f:
               sarif = json.load(f)
@@ -201,28 +202,57 @@ jobs:
                       physical = location.get('physicalLocation', {})
                       artifact = physical.get('artifactLocation', {})
                       uri = artifact.get('uri', '')
+                      
                       # Convert URL to a pseudo file path
                       if uri.startswith('http'):
-                          # Extract path from URL or use a placeholder
-                          from urllib.parse import urlparse
                           parsed = urlparse(uri)
-                          path = parsed.path if parsed.path and parsed.path != '/' else '/index'
-                          artifact['uri'] = f"web{path}"
-                          artifact['uriBaseId'] = '%SRCROOT%'
-                      # Ensure region exists
+                          path = parsed.path if parsed.path and parsed.path != '/' else '/index.html'
+                          # Remove leading slash and use relative path
+                          clean_path = path.lstrip('/')
+                          if not clean_path:
+                              clean_path = 'index.html'
+                          artifact['uri'] = f"web/{clean_path}"
+                          # Remove uriBaseId if present - use relative paths only
+                          if 'uriBaseId' in artifact:
+                              del artifact['uriBaseId']
+                      
+                      # Ensure region exists with valid values
                       if 'region' not in physical:
                           physical['region'] = {'startLine': 1, 'startColumn': 1}
+                      else:
+                          region = physical['region']
+                          if 'startLine' not in region or region['startLine'] < 1:
+                              region['startLine'] = 1
+                          if 'startColumn' not in region or region['startColumn'] < 1:
+                              region['startColumn'] = 1
 
           with open('nuclei-results-fixed.sarif', 'w') as f:
               json.dump(sarif, f, indent=2)
           print("Created nuclei-results-fixed.sarif")
+          
+          # Debug: show what we created
+          with open('nuclei-results-fixed.sarif', 'r') as f:
+              data = json.load(f)
+              for run in data.get('runs', []):
+                  for result in run.get('results', [])[:3]:
+                      for loc in result.get('locations', []):
+                          print(f"Location URI: {loc.get('physicalLocation', {}).get('artifactLocation', {})}")
           EOF
           fi
 
-          # Create placeholder files so GitHub can map the results
+          # Create placeholder web files for each finding path
           mkdir -p web
-          echo "# Web Application Security Scan Results" > web/index
-          echo "# Findings mapped from dynamic security scanning" >> web/index
+          echo "# Web Security Scan Placeholder" > web/index.html
+          # Create common paths that might be referenced
+          for path in ".env" "config.json" "backup.sql" "swagger.json" "graphql" ".git/config"; do
+            dir=$(dirname "web/$path")
+            mkdir -p "$dir"
+            echo "# Security scan finding location" > "web/$path"
+          done
+          
+          # List created files
+          echo "=== Created web placeholder files ==="
+          find web -type f
         continue-on-error: true
 
       - name: Upload Nuclei SARIF Report
