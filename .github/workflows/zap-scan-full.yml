@@ -1,0 +1,74 @@
+name: ZAP Passive Security Scan (with local app)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  zap-scan:
+    name: ZAP Passive Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Uncomment and modify the build steps for your application
+      # - name: Setup Node.js
+      #   uses: actions/setup-node@v4
+      #   with:
+      #     node-version: '20'
+      #
+      # - name: Install dependencies
+      #   run: npm ci
+      #
+      # - name: Build application
+      #   run: npm run build
+      #
+      # - name: Start application
+      #   run: npm start &
+      #   env:
+      #     PORT: 3000
+      #
+      # - name: Wait for application to start
+      #   run: |
+      #     timeout 60 bash -c 'until curl -s http://localhost:3000 > /dev/null; do sleep 2; done'
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          # Target URL to scan
+          # Use http://localhost:3000 for local app or your deployed URL
+          target: 'https://your-application-url.com'
+          # Generate SARIF report for GitHub Advanced Security
+          cmd_options: '-a -j'
+          # Rules file to customize scan (optional)
+          # rules_file_name: '.zap/rules.tsv'
+          # Fail action if alerts are found (set to true to block PRs)
+          fail_action: false
+          # Allow ZAP to write issues to GitHub (set to false if only using SARIF)
+          allow_issue_writing: false
+
+      - name: Upload ZAP SARIF Report to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'results.sarif'
+          category: 'zap-passive-scan'
+        if: always()
+
+      - name: Upload ZAP Report as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-scan-report
+          path: |
+            results.sarif
+            report_html.html
+          retention-days: 30
+        if: always()

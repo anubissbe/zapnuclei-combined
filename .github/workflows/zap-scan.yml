@@ -1,0 +1,37 @@
+name: ZAP Passive Security Scan
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  zap-scan:
+    name: ZAP Passive Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          # Target URL to scan - replace with your application URL
+          target: 'https://your-application-url.com'
+          # Generate SARIF report
+          cmd_options: '-a -j'
+          # Allow scan to pass even if alerts are found (we still upload them)
+          allow_issue_writing: false
+          
+      - name: Upload ZAP SARIF Report
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'results.sarif'
+        if: always()
