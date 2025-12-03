@@ -95,12 +95,12 @@ jobs:
         echo "🔍 Running Nuclei template scan..."
         docker exec security-app nuclei \
           -target http://localhost:3000 \
-          -o /app/nuclei-report.json \
-          -json \
+          -o /app/nuclei-report.jsonl \
+          -jsonl \
           -silent || true
         
         # Copy report from container  
-        docker cp security-app:/app/nuclei-report.json ./nuclei-report.json || echo "No Nuclei report generated"
+        docker cp security-app:/app/nuclei-report.jsonl ./nuclei-report.jsonl || echo "No Nuclei report generated"
     
     - name: Convert to SARIF and Upload
       run: |
@@ -179,11 +179,11 @@ jobs:
             results = []
             rules = []
             
-            if not os.path.exists('nuclei-report.json'):
+            if not os.path.exists('nuclei-report.jsonl'):
                 return results, rules
             
             try:
-                with open('nuclei-report.json', 'r') as f:
+                with open('nuclei-report.jsonl', 'r') as f:
                     for line in f:
                         if line.strip():
                             nuclei_result = json.loads(line)
@@ -249,7 +249,7 @@ jobs:
         name: security-reports-inline
         path: |
           zap-report.json
-          nuclei-report.json
+          nuclei-report.jsonl
           security-scan.sarif
     
     - name: Clean up
