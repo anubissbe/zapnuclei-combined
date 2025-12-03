@@ -1,4 +1,4 @@
-name: Security Scan (Inline Build - 2 minutes)
+name: Security Scan (Inline Build)
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ env:
 
 jobs:
   security-scan:
-    name: Fast Security Scan (Inline)
+    name: Security Scan (Inline)
     runs-on: ubuntu-latest
     
     steps:

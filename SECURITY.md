@@ -69,7 +69,7 @@ If you discover a security vulnerability in the scanning tool, workflow, or infr
 
 ## Known Intentional Vulnerabilities
 
-⚠️ **This repository contains intentional security vulnerabilities for testing purposes**
+**This repository contains intentional security vulnerabilities for testing purposes**
 
 ### Test Application Vulnerabilities (server.js)
 
@@ -139,4 +139,4 @@ This project aims to follow:
 
 ---
 
-**Thank you for helping keep this security tool secure! 🔒**
+**Thank you for helping keep this security tool secure!**

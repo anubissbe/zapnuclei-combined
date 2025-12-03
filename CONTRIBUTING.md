@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to this project! We welcome contributions from the community.
 
-## 🤝 Ways to Contribute
+## Ways to Contribute
 
 - **Bug Reports**: Report issues or unexpected behavior
 - **Feature Requests**: Suggest new features or improvements
@@ -10,7 +10,7 @@ Thank you for your interest in contributing to this project! We welcome contribu
 - **Documentation**: Improve or expand documentation
 - **Testing**: Help test new features and report feedback
 
-## 🐛 Reporting Issues
+## Reporting Issues
 
 Before creating an issue, please:
 
@@ -19,7 +19,7 @@ Before creating an issue, please:
 3. Include environment information (OS, Node.js version, etc.)
 4. Attach relevant logs or screenshots
 
-## 🔧 Development Setup
+## Development Setup
 
 1. **Fork the repository**
    ```bash
@@ -41,7 +41,7 @@ Before creating an issue, please:
    - Requires Docker for ZAP and Nuclei
    - See README.md for detailed setup
 
-## 📝 Pull Request Process
+## Pull Request Process
 
 1. **Create a feature branch**
    ```bash
@@ -68,7 +68,7 @@ Before creating an issue, please:
    git push origin feature/your-feature-name
    ```
 
-## 🎯 Contribution Guidelines
+## Contribution Guidelines
 
 ### Code Style
 - Use consistent indentation (2 spaces)
@@ -94,7 +94,7 @@ Before creating an issue, please:
 - Ensure new features don't introduce actual security issues
 - Test with both ZAP and Nuclei scanners
 
-## 🔍 Testing
+## Testing
 
 ### Manual Testing
 1. Run the vulnerable app: `npm start`
@@ -116,7 +116,7 @@ If you discover a security vulnerability in this tool (not the intentional test 
 3. Provide detailed information about the vulnerability
 4. Allow time for the issue to be addressed before disclosure
 
-## 💡 Feature Ideas
+## Feature Ideas
 
 Some areas where contributions would be valuable:
 
@@ -127,16 +127,16 @@ Some areas where contributions would be valuable:
 - Integration with other CI/CD platforms
 - Enhanced reporting features
 
-## ❓ Questions?
+## Questions?
 
 - Create an issue with the "question" label
 - Check existing issues for similar questions
 - Review the README.md documentation
 
-## 📄 License
+## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
 
 ---
 
-**Thank you for helping make security testing more accessible! 🚀**
+**Thank you for helping make security testing more accessible!**

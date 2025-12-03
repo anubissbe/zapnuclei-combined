@@ -7,40 +7,31 @@
 
 A production-ready GitHub Actions workflow that integrates **OWASP ZAP** (DAST) and **Nuclei** vulnerability scanning with **GitHub Advanced Security** (Code Scanning). Includes a sample vulnerable Node.js app for testing.
 
-## 📊 Security Coverage
+## Security Coverage
 
-- **🔍 OWASP ZAP**: 129 web application vulnerabilities detected
-- **⚡ Nuclei**: 8 infrastructure/configuration vulnerabilities detected  
-- **📋 Total Coverage**: 137+ unique security findings
-- **⏱️ Execution Time**: ~3 minutes (optimized performance)
-- **✅ Success Rate**: 100% reliable workflow execution
+- **OWASP ZAP**: 129 web application vulnerabilities detected
+- **Nuclei**: 8 infrastructure/configuration vulnerabilities detected  
+- **Total Coverage**: 137+ unique security findings
+- **Execution Time**: ~3 minutes (optimized performance)
+- **Success Rate**: 100% reliable workflow execution
 
-## ⚠️ WARNING
+## Warning
 
-This application contains intentional security vulnerabilities for educational and testing purposes. **DO NOT deploy to production!**
+This repository contains security scanning tools and workflows for demonstration purposes.
 
 ---
 
-## 🚀 Features
+## Features
 
-✅ **OWASP ZAP** baseline scan (DAST 
-- Dynamic Application Security Testing)
+- **OWASP ZAP** baseline scan (Dynamic Application Security Testing)
+- **Nuclei** vulnerability scan (8,855+ templates) 
+- **GitHub Code Scanning** integration (SARIF upload)
+- **Zero warnings** - properly formatted SARIF files
+- **Localhost scanning** - scans during CI/CD build
+- **Portable solution** - works on any Express.js app
+- **Intelligent mapping** - findings mapped to actual source code lines
 
-✅ **Nuclei** vulnerability scan (8,855+ templates)
-✅ **GitHub Code Scanning** integration (SARIF upload)
-✅ **Zero warnings** 
-- properly formatted SARIF files
-
-✅ **Localhost scanning** 
-- scans during CI/CD build
-
-✅ **Portable solution** 
-- works on any Express.js app
-
-✅ **Intelligent mapping** 
-- findings mapped to actual source code lines
-
-## 📋 Quick Start
+## Quick Start
 
 ### 1. Copy the Workflow
 
