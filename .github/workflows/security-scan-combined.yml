@@ -76,10 +76,24 @@ jobs:
             python3 << 'EOF'
           import json
           import re
-          import hashlib
+          import subprocess
+          from urllib.parse import urlparse
 
           with open('report_json.json', 'r') as f:
               zap = json.load(f)
+
+          # Build a map of URL paths to line numbers by scanning server.js
+          # This makes the solution work for any repo - just scan for route definitions
+          path_to_line = {'/': 1}  # default
+          try:
+              with open('server.js', 'r') as f:
+                  for line_num, line in enumerate(f, 1):
+                      # Match Express routes: app.get('/path', ...) or app.post('/path', ...)
+                      match = re.search(r"app\.(get|post|put|delete|all)\s*\(\s*['\"]([^'\"]+)['\"]", line)
+                      if match:
+                          path_to_line[match.group(2)] = line_num
+          except FileNotFoundError:
+              pass
 
           sarif = {
               "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
@@ -99,6 +113,7 @@ jobs:
 
           rules = {}
           results = []
+          rule_index_map = {}
 
           risk_to_level = {"0": "note", "1": "note", "2": "warning", "3": "error"}
           risk_to_severity = {"0": "1.0", "1": "3.0", "2": "6.0", "3": "9.0"}
@@ -107,10 +122,8 @@ jobs:
               """Extract clean URL from ZAP's HTML-wrapped reference field"""
               if not text:
                   return None
-              # Remove HTML tags like <p>...</p>
               urls = re.findall(r'https?://[^\s<>"]+', text)
               for url in urls:
-                  # Return first valid URL
                   if url.startswith('http'):
                       return url.rstrip('.,;:')
               return None
@@ -121,18 +134,32 @@ jobs:
                   return ""
               return re.sub(r'<[^>]+>', '', text).strip()
 
+          def get_line_for_path(url_path):
+              """Find the line number for a URL path"""
+              # Exact match first
+              if url_path in path_to_line:
+                  return path_to_line[url_path]
+              # Try without query string
+              clean_path = url_path.split('?')[0]
+              if clean_path in path_to_line:
+                  return path_to_line[clean_path]
+              # Try base path for api routes like /api/products -> /api
+              for known_path in sorted(path_to_line.keys(), key=len, reverse=True):
+                  if clean_path.startswith(known_path) and known_path != '/':
+                      return path_to_line[known_path]
+              return path_to_line.get('/', 1)
+
           for site in zap.get("site", []):
               for alert in site.get("alerts", []):
                   rule_id = f"zap-{alert.get('pluginid', 'unknown')}"
                   alert_name = alert.get("name", "Unknown")
                   
                   if rule_id not in rules:
-                      # Extract clean helpUri from reference field
                       help_uri = extract_url(alert.get("reference", ""))
                       
                       rule = {
                           "id": rule_id,
-                          "name": alert_name.replace(" ", ""),
+                          "name": alert_name.replace(" ", "")[:512],
                           "shortDescription": {"text": alert_name[:1024]},
                           "fullDescription": {"text": clean_html(alert.get("desc", "Security issue detected"))[:1024]},
                           "help": {
@@ -141,49 +168,46 @@ jobs:
                           },
                           "properties": {
                               "security-severity": risk_to_severity.get(alert.get("riskcode", "1"), "5.0"),
-                              "tags": ["security", "web"]
+                              "tags": ["security", "zap"]
                           }
                       }
-                      # Only add helpUri if we have a valid URL
                       if help_uri:
                           rule["helpUri"] = help_uri
                       
+                      rule_index_map[rule_id] = len(rules)
                       rules[rule_id] = rule
                   
-                  for idx, instance in enumerate(alert.get("instances", [])):
+                  for instance in alert.get("instances", []):
                       uri = instance.get("uri", "")
                       method = instance.get("method", "GET")
                       param = instance.get("param", "")
                       
-                      # Create unique fingerprint for this finding
-                      fingerprint_data = f"{rule_id}:{uri}:{method}:{param}"
-                      fingerprint = hashlib.sha256(fingerprint_data.encode()).hexdigest()[:16]
+                      # Parse URL to get path
+                      parsed = urlparse(uri)
+                      url_path = parsed.path if parsed.path else "/"
+                      line_num = get_line_for_path(url_path)
                       
                       message_text = f"{alert_name}"
                       if param:
                           message_text += f" in parameter '{param}'"
-                      message_text += f" at {uri}"
+                      message_text += f" [{method} {url_path}]"
                       
+                      # DO NOT include partialFingerprints - let GitHub calculate them
+                      # GitHub uses file+line to create stable fingerprints
                       results.append({
                           "ruleId": rule_id,
-                          "ruleIndex": list(rules.keys()).index(rule_id),
+                          "ruleIndex": rule_index_map[rule_id],
                           "level": risk_to_level.get(alert.get("riskcode", "1"), "warning"),
                           "message": {"text": message_text[:1024]},
                           "locations": [{
                               "physicalLocation": {
-                                  "artifactLocation": {
-                                      "uri": "server.js"
-                                  },
+                                  "artifactLocation": {"uri": "server.js"},
                                   "region": {
-                                      "startLine": 1,
-                                      "startColumn": 1,
-                                      "endColumn": 2
+                                      "startLine": line_num,
+                                      "startColumn": 1
                                   }
                               }
-                          }],
-                          "partialFingerprints": {
-                              "primaryLocationLineHash": fingerprint
-                          }
+                          }]
                       })
 
           sarif["runs"][0]["tool"]["driver"]["rules"] = list(rules.values())
@@ -192,12 +216,13 @@ jobs:
           with open('zap-results.sarif', 'w') as f:
               json.dump(sarif, f, indent=2)
           print(f"Created zap-results.sarif with {len(results)} findings and {len(rules)} rules")
+          print(f"Path to line mappings: {len(path_to_line)} routes found")
           EOF
           fi
         continue-on-error: true
 
       - name: Upload ZAP SARIF Report
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'zap-results.sarif'
           category: 'zap-scan'
@@ -227,21 +252,58 @@ jobs:
         continue-on-error: true
 
       # Fix SARIF files for GitHub Code Scanning
-      # GitHub requires URIs to be relative paths to actual files in the repo
+      # GitHub calculates fingerprints from file+line - don't provide our own
       - name: Fix SARIF files for GitHub
         run: |
-          # Create a completely new SARIF file from Nuclei results
-          # Map findings to server.js since that's where the vulnerable endpoints are defined
           if [ -f "nuclei-results.sarif" ]; then
             echo "Creating GitHub-compatible SARIF from Nuclei results..."
             python3 << 'EOF'
           import json
-          import hashlib
+          import re
+          from urllib.parse import urlparse
 
           with open('nuclei-results.sarif', 'r') as f:
               original = json.load(f)
 
-          # Build a new SARIF from scratch following GitHub's requirements exactly
+          # Build a map of URL paths to line numbers by scanning server.js
+          # This makes the solution portable to any repo
+          path_to_line = {'/': 1}
+          try:
+              with open('server.js', 'r') as f:
+                  for line_num, line in enumerate(f, 1):
+                      match = re.search(r"app\.(get|post|put|delete|all)\s*\(\s*['\"]([^'\"]+)['\"]", line)
+                      if match:
+                          path_to_line[match.group(2)] = line_num
+          except FileNotFoundError:
+              pass
+
+          def get_line_for_path(url_path):
+              """Find the line number for a URL path"""
+              if url_path in path_to_line:
+                  return path_to_line[url_path]
+              clean_path = url_path.split('?')[0]
+              if clean_path in path_to_line:
+                  return path_to_line[clean_path]
+              for known_path in sorted(path_to_line.keys(), key=len, reverse=True):
+                  if clean_path.startswith(known_path) and known_path != '/':
+                      return path_to_line[known_path]
+              return path_to_line.get('/', 1)
+
+          def extract_path_from_message(message):
+              """Extract URL path from Nuclei finding message"""
+              # Try to find URL in message
+              match = re.search(r'https?://[^/]+(/[^\s\]"]*)', message)
+              if match:
+                  return match.group(1)
+              # Try to find path in square brackets [path=/xxx]
+              match = re.search(r'\[paths?="?(/[^"\]\s]+)"?\]', message)
+              if match:
+                  return match.group(1)
+              match = re.search(r'\[path="?(/[^"\]\s]+)"?\]', message)
+              if match:
+                  return match.group(1)
+              return '/'
+
           new_sarif = {
               "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
               "version": "2.1.0",
@@ -255,7 +317,7 @@ jobs:
                   "tool": {
                       "driver": {
                           "name": tool.get('name', 'Nuclei'),
-                          "semanticVersion": tool.get('semanticVersion', '3.0.0'),
+                          "semanticVersion": tool.get('semanticVersion', '3.0.0').lstrip('v'),
                           "informationUri": "https://github.com/projectdiscovery/nuclei",
                           "rules": []
                       }
@@ -263,18 +325,17 @@ jobs:
                   "results": []
               }
               
-              # Process rules - must have shortDescription and fullDescription
               rules_map = {}
               for rule in tool.get('rules', []):
                   rule_id = rule.get('id', 'unknown')
                   short_desc = rule.get('shortDescription', {}).get('text', rule_id)
-                  full_desc = rule.get('fullDescription', {}).get('text', 'Security finding detected by Nuclei scanner')
+                  full_desc = rule.get('fullDescription', {}).get('text', 'Security finding')
                   
                   new_rule = {
                       "id": rule_id,
                       "name": rule_id.replace("-", "").replace(":", "").title()[:512],
                       "shortDescription": {"text": short_desc[:1024]},
-                      "fullDescription": {"text": full_desc[:1024]},
+                      "fullDescription": {"text": full_desc[:1024] if full_desc else "Security finding detected"},
                       "help": {
                           "text": f"Security vulnerability detected: {short_desc}",
                           "markdown": f"**{short_desc}**\n\nDetected by Nuclei vulnerability scanner."
@@ -287,38 +348,29 @@ jobs:
                   rules_map[rule_id] = len(new_run["tool"]["driver"]["rules"])
                   new_run["tool"]["driver"]["rules"].append(new_rule)
               
-              # Process results - URI must be a real file in the repo
-              for idx, result in enumerate(run.get('results', [])):
+              for result in run.get('results', []):
                   rule_id = result.get('ruleId', 'unknown')
                   message = result.get('message', {}).get('text', 'Security finding')
                   
-                  # Create unique fingerprint using SHA256
-                  fingerprint_data = f"{rule_id}:{message}:{idx}"
-                  fingerprint = hashlib.sha256(fingerprint_data.encode()).hexdigest()[:16]
+                  # Extract URL path from message and map to line number
+                  url_path = extract_path_from_message(message)
+                  line_num = get_line_for_path(url_path)
                   
-                  # Map to server.js since that's where endpoints are defined
+                  # DO NOT include partialFingerprints - let GitHub calculate them
                   new_result = {
                       "ruleId": rule_id,
                       "ruleIndex": rules_map.get(rule_id, 0),
                       "level": "warning",
                       "message": {"text": message[:1024]},
-                      "locations": [
-                          {
-                              "physicalLocation": {
-                                  "artifactLocation": {
-                                      "uri": "server.js"
-                                  },
-                                  "region": {
-                                      "startLine": 1,
-                                      "startColumn": 1,
-                                      "endColumn": 2
-                                  }
+                      "locations": [{
+                          "physicalLocation": {
+                              "artifactLocation": {"uri": "server.js"},
+                              "region": {
+                                  "startLine": line_num,
+                                  "startColumn": 1
                               }
                           }
-                      ],
-                      "partialFingerprints": {
-                          "primaryLocationLineHash": fingerprint
-                      }
+                      }]
                   }
                   new_run["results"].append(new_result)
               
@@ -328,12 +380,13 @@ jobs:
               json.dump(new_sarif, f, indent=2)
           
           print(f"Created nuclei-results-fixed.sarif with {len(new_sarif['runs'][0]['results'])} findings")
+          print(f"Path to line mappings: {len(path_to_line)} routes found")
           EOF
           fi
         continue-on-error: true
 
       - name: Upload Nuclei SARIF Report
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'nuclei-results-fixed.sarif'
           category: 'nuclei-scan'
