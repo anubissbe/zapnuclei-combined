@@ -1,5 +1,5 @@
 # Multi-stage build for security scanning
-FROM node:20-alpine AS app-build
+FROM node:24-alpine AS app-build
 
 WORKDIR /app
 COPY package*.json ./
