@@ -235,8 +235,7 @@ jobs:
         with:
           target: 'http://${{ steps.ip.outputs.address }}:3000'
           sarif-export: 'nuclei-results.sarif'
-          severity: 'critical,high,medium,low,info'
-          rate-limit: 150
+          flags: '-severity critical,high,medium,low,info -rate-limit 150'
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
