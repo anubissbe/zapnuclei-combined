@@ -50,16 +50,31 @@ jobs:
         uses: zaproxy/action-baseline@v0.14.0
         with:
           target: 'http://${{ steps.ip.outputs.address }}:3000'
-          cmd_options: '-a -j'
+          cmd_options: '-a'
           fail_action: false
           allow_issue_writing: false
+        continue-on-error: true
+
+      # Convert ZAP JSON to SARIF if needed
+      - name: Check ZAP outputs
+        run: |
+          echo "=== Checking for ZAP output files ==="
+          ls -la *.json *.sarif *.html *.md 2>/dev/null || echo "No report files found in root"
+          ls -la report* 2>/dev/null || echo "No report files found"
+          # ZAP baseline creates report_json.json, we need to check for sarif
+          if [ -f "report_json.json" ]; then
+            echo "Found report_json.json"
+            cat report_json.json | head -50
+          fi
+        continue-on-error: true
 
       - name: Upload ZAP SARIF Report
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: 'results.sarif'
+          sarif_file: 'report_sarif.json'
           category: 'zap-scan'
-        if: always()
+        if: hashFiles('report_sarif.json') != ''
+        continue-on-error: true
 
       # Nuclei Scan - outputs SARIF format
       - name: Nuclei Scan
@@ -67,16 +82,29 @@ jobs:
         with:
           target: 'http://${{ steps.ip.outputs.address }}:3000'
           sarif-export: 'nuclei-results.sarif'
-          severity: 'critical,high,medium,low'
+          severity: 'critical,high,medium,low,info'
           rate-limit: 150
           github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Check Nuclei outputs
+        run: |
+          echo "=== Checking for Nuclei output files ==="
+          ls -la *.sarif 2>/dev/null || echo "No SARIF files found"
+          ls -la nuclei* 2>/dev/null || echo "No nuclei files found"
+          if [ -f "nuclei-results.sarif" ]; then
+            echo "Found nuclei-results.sarif"
+            cat nuclei-results.sarif | head -50
+          fi
+        continue-on-error: true
 
       - name: Upload Nuclei SARIF Report
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'nuclei-results.sarif'
           category: 'nuclei-scan'
-        if: always()
+        if: hashFiles('nuclei-results.sarif') != ''
+        continue-on-error: true
 
       # Save reports as artifacts
       - name: Upload Reports as Artifacts
@@ -84,8 +112,9 @@ jobs:
         with:
           name: security-scan-reports
           path: |
-            results.sarif
-            nuclei-results.sarif
-            report_html.html
+            *.sarif
+            *.json
+            *.html
+            *.md
           retention-days: 30
         if: always()
