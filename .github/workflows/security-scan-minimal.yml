@@ -47,7 +47,7 @@ jobs:
 
       # Nuclei targeted scan (only high-impact templates)
       - name: Nuclei Targeted Scan
-        uses: projectdiscovery/nuclei-action@v2.0.2
+        uses: projectdiscovery/nuclei-action@v3.1.1
         with:
           target: 'http://localhost:3000'
           sarif-export: 'nuclei-results.sarif'

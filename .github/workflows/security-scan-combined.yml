@@ -231,7 +231,7 @@ jobs:
 
       # Nuclei Scan - outputs SARIF format
       - name: Nuclei Scan
-        uses: projectdiscovery/nuclei-action@v2.0.2
+        uses: projectdiscovery/nuclei-action@v3.1.1
         with:
           target: 'http://${{ steps.ip.outputs.address }}:3000'
           sarif-export: 'nuclei-results.sarif'
